@@ -1,0 +1,213 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Document Writer - IMS Workspace</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; font-family: Arial, sans-serif; }
+    body { background: #f3f4f6; height: 100vh; display: flex; flex-direction: column; }
+    
+    /* Auth Modal */
+    .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.6); display: flex; align-items: center; justify-content: center; z-index: 1000; }
+    .modal { background: white; padding: 25px; border-radius: 8px; width: 320px; box-shadow: 0 4px 15px rgba(0,0,0,0.2); }
+    .modal h2 { margin-bottom: 15px; color: #1e293b; }
+    .modal input { width: 100%; padding: 10px; margin-bottom: 10px; border: 1px solid #ccc; border-radius: 4px; }
+    .modal button { width: 100%; padding: 10px; background: #2563eb; color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: bold; margin-bottom: 10px; }
+    .modal .toggle-btn { background: transparent; color: #2563eb; text-decoration: underline; font-weight: normal; }
+
+    /* App Layout */
+    .top-bar { background: #1e293b; color: white; padding: 10px 15px; display: flex; justify-content: space-between; align-items: center; }
+    .ribbon { background: #e2e8f0; padding: 8px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; border-bottom: 1px solid #cbd5e1; }
+    .ribbon button, .ribbon select, .ribbon label { padding: 6px 12px; background: white; border: 1px solid #94a3b8; border-radius: 4px; cursor: pointer; font-size: 13px; }
+    
+    /* Dropdown Office Menu */
+    .dropdown { position: relative; display: inline-block; }
+    .dropdown-content { display: none; position: absolute; background: white; min-width: 130px; box-shadow: 0 4px 8px rgba(0,0,0,0.1); z-index: 100; border-radius: 4px; }
+    .dropdown-content button { display: block; width: 100%; border: none; background: none; text-align: left; padding: 8px 12px; border-bottom: 1px solid #eee; }
+    .dropdown:hover .dropdown-content { display: block; }
+
+    /* Main Container */
+    .main-container { display: flex; flex: 1; overflow: hidden; }
+    .sidebar { width: 220px; background: white; border-right: 1px solid #cbd5e1; padding: 15px; overflow-y: auto; }
+    .sidebar button { width: 100%; padding: 8px; background: #16a34a; color: white; border: none; border-radius: 4px; font-weight: bold; cursor: pointer; margin-bottom: 15px; }
+    .doc-item { padding: 8px; border-bottom: 1px solid #eee; cursor: pointer; display: flex; justify-content: space-between; font-size: 14px; }
+    .editor-container { flex: 1; padding: 20px; display: flex; flex-direction: column; align-items: center; overflow-y: auto; }
+    #document-title { font-size: 18px; font-weight: bold; margin-bottom: 10px; padding: 5px; width: 100%; max-width: 800px; border: 1px solid transparent; }
+    #document-title:focus { border: 1px solid #cbd5e1; background: white; }
+    .editor { width: 100%; max-width: 800px; min-height: 600px; background: white; padding: 40px; box-shadow: 0 0 10px rgba(0,0,0,0.1); outline: none; border-radius: 2px; }
+  </style>
+</head>
+<body>
+
+  <!-- Auth Modal -->
+  <div id="auth-modal" class="modal-overlay">
+    <div class="modal">
+      <h2 id="modal-title">Already an IMS user</h2>
+      <input type="text" id="auth-name" placeholder="Full Name" style="display:none;">
+      <input type="email" id="auth-email" placeholder="Email Address">
+      <input type="password" id="auth-pass" placeholder="Password">
+      <button onclick="handleAuth()" id="auth-submit">Sign In</button>
+      <button class="toggle-btn" onclick="toggleAuthMode()" id="auth-toggle">New for IMS? Sign Up</button>
+    </div>
+  </div>
+
+  <!-- Top Bar -->
+  <div class="top-bar">
+    <div class="dropdown">
+      <button style="background:#0284c7; color:white; font-weight:bold;">🏢 Office Options</button>
+      <div class="dropdown-content">
+        <button onclick="createNewDoc()">📄 New Page</button>
+        <button onclick="saveDocument()">💾 Save</button>
+        <button onclick="deleteDocument()" style="color:red;">🗑️ Delete</button>
+      </div>
+    </div>
+    <span id="user-display"></span>
+    <button onclick="logout()" style="background:#ef4444; color:white; border:none; padding:5px 10px; border-radius:4px; cursor:pointer;">Logout</button>
+  </div>
+
+  <!-- Ribbon Menu -->
+  <div class="ribbon">
+    <label>Color: <input type="color" onchange="execCmd('foreColor', this.value)"></label>
+    <select onchange="execCmd('fontName', this.value)">
+      <option value="Arial">Arial</option>
+      <option value="Times New Roman">Times New Roman</option>
+      <option value="Courier New">Courier New</option>
+    </select>
+    <button onclick="insertImage()">🖼️ Add Image</button>
+    <button onclick="insertShape()">⏹️ Add Shape</button>
+    <button onclick="execCmd('cut')">✂️ Cut</button>
+    <button onclick="execCmd('copy')">📋 Copy</button>
+    <button onclick="saveDocument()" style="font-weight:bold; background:#dcfce7;">💾 Save</button>
+  </div>
+
+  <!-- Main View -->
+  <div class="main-container">
+    <div class="sidebar">
+      <button onclick="createNewDoc()">+ Create New Document</button>
+      <h3>My Documents</h3>
+      <div id="doc-list" style="margin-top:10px;"></div>
+    </div>
+    <div class="editor-container">
+      <input type="text" id="document-title" value="Untitled Document">
+      <div id="editor" class="editor" contenteditable="true"></div>
+    </div>
+  </div>
+
+  <script>
+    let currentUser = JSON.parse(localStorage.getItem('ims_user')) || null;
+    let currentDocId = null;
+    let isSignUp = false;
+
+    window.onload = () => {
+      if (currentUser) {
+        document.getElementById('auth-modal').style.display = 'none';
+        document.getElementById('user-display').innerText = currentUser.fullName;
+        loadUserDocs();
+      }
+    };
+
+    function toggleAuthMode() {
+      isSignUp = !isSignUp;
+      document.getElementById('modal-title').innerText = isSignUp ? "New for IMS" : "Already an IMS user";
+      document.getElementById('auth-name').style.display = isSignUp ? "block" : "none";
+      document.getElementById('auth-submit').innerText = isSignUp ? "Sign Up" : "Sign In";
+      document.getElementById('auth-toggle').innerText = isSignUp ? "Already an IMS user? Sign In" : "New for IMS? Sign Up";
+    }
+
+    async function handleAuth() {
+      const email = document.getElementById('auth-email').value;
+      const password = document.getElementById('auth-pass').value;
+      const fullName = document.getElementById('auth-name').value;
+      const endpoint = isSignUp ? '/api/auth/register' : '/api/auth/login';
+
+      const res = await fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, password, fullName })
+      });
+      const data = await res.json();
+
+      if (res.ok) {
+        currentUser = data.user;
+        localStorage.setItem('ims_user', JSON.stringify(currentUser));
+        document.getElementById('auth-modal').style.display = 'none';
+        document.getElementById('user-display').innerText = currentUser.fullName;
+        loadUserDocs();
+      } else {
+        alert(data.error || 'Authentication failed');
+      }
+    }
+
+    function logout() {
+      localStorage.removeItem('ims_user');
+      location.reload();
+    }
+
+    function execCmd(command, value = null) {
+      document.execCommand(command, false, value);
+    }
+
+    function insertImage() {
+      const url = prompt("Enter image URL:");
+      if (url) execCmd('insertImage', url);
+    }
+
+    function insertShape() {
+      const shape = `<div style="width:100px; height:100px; background:#2563eb; display:inline-block; margin:5px;"></div>`;
+      document.execCommand('insertHTML', false, shape);
+    }
+
+    async function saveDocument() {
+      if (!currentUser) return;
+      const title = document.getElementById('document-title').value;
+      const content = document.getElementById('editor').innerHTML;
+
+      const res = await fetch('/api/docs/save', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ docId: currentDocId, userEmail: currentUser.email, title, content })
+      });
+      const savedDoc = await res.json();
+      currentDocId = savedDoc._id;
+      alert("Document Saved Successfully!");
+      loadUserDocs();
+    }
+
+    async function loadUserDocs() {
+      const res = await fetch(`/api/docs/${currentUser.email}`);
+      const docs = await res.json();
+      const list = document.getElementById('doc-list');
+      list.innerHTML = '';
+      docs.forEach(doc => {
+        const item = document.createElement('div');
+        item.className = 'doc-item';
+        item.innerText = doc.title;
+        item.onclick = () => openDoc(doc);
+        list.appendChild(item);
+      });
+    }
+
+    function openDoc(doc) {
+      currentDocId = doc._id;
+      document.getElementById('document-title').value = doc.title;
+      document.getElementById('editor').innerHTML = doc.content;
+    }
+
+    function createNewDoc() {
+      currentDocId = null;
+      document.getElementById('document-title').value = "Untitled Document";
+      document.getElementById('editor').innerHTML = "";
+    }
+
+    async function deleteDocument() {
+      if (!currentDocId) return alert("No saved document selected to delete.");
+      if (confirm("Delete this document?")) {
+        await fetch(`/api/docs/${currentDocId}`, { method: 'DELETE' });
+        createNewDoc();
+        loadUserDocs();
+      }
+    }
+  </script>
+</body>
+</html>
